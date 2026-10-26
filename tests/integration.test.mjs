@@ -1,0 +1,56 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const base = process.env.UI_URL || 'http://localhost:3000';
+async function request(path, init) {
+  const response = await fetch(base + path, init);
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  assert.equal(body.success, true);
+  return body.data;
+}
+test('document → source → clauses → playbook → report → persisted decision', async () => {
+  const list = await request('/api/playbooks');
+  assert.ok(list.playbooks.some(p => p.playbook_id === list.default_playbook_id));
+  const playbook = await request(`/api/playbooks/${encodeURIComponent(list.default_playbook_id)}`);
+  assert.ok(playbook.rules.length);
+  const custom = JSON.parse(await readFile(new URL('./fixtures/playbook.json', import.meta.url), 'utf8'));
+  custom.playbook_id = `UI-TEST-${Date.now()}`;
+  const playbookForm = new FormData();
+  playbookForm.append('file', new File([JSON.stringify(custom)], 'test-playbook.json', { type: 'application/json' }));
+  const uploadedPlaybook = await request('/api/playbooks', { method: 'POST', body: playbookForm });
+  assert.equal(uploadedPlaybook.playbook_id, custom.playbook_id);
+  const form = new FormData();
+  form.append('file', new File([await readFile(new URL('./fixtures/sample.docx', import.meta.url))], 'sample.docx'));
+  const upload = await request('/api/documents', { method: 'POST', body: form });
+  assert.ok(upload.document_id);
+  const text = await request(`/api/documents/${upload.document_id}/text`);
+  assert.match(text.pages.map(p => p.text).join('\n'), /Fictional NDA/);
+  const clauses = await request(`/api/documents/${upload.document_id}/clauses?method=manual`);
+  assert.ok(clauses.clauses.length);
+  const created = await request('/api/reviews', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document_id: upload.document_id, playbook_id: custom.playbook_id }) });
+  assert.ok(created.review_id);
+  assert.notEqual(created.review_id, upload.document_id);
+  const report = await request(`/api/reviews/${created.review_id}`);
+  assert.equal(report.metadata.document_id, upload.document_id);
+  assert.ok(report.rule_results.length);
+  assert.ok(report.findings.length);
+  const finding = report.findings[0];
+  const path = `/api/reviews/${created.review_id}/findings/${finding.finding_id}`;
+  const decision = await request(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'accepted', comment: 'Integration test comment' }) });
+  assert.equal(decision.status, 'accepted');
+  const saved = await request(`/api/reviews/${created.review_id}`);
+  assert.equal(saved.findings.find(f => f.finding_id === finding.finding_id).comment, 'Integration test comment');
+  await request(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment: null }) });
+  const cleared = await request(`/api/reviews/${created.review_id}`);
+  assert.equal(cleared.findings.find(f => f.finding_id === finding.finding_id).comment, null);
+});
+test('backend validation and missing IDs remain errors through proxy', async () => {
+  const form = new FormData(); form.append('file', new File(['bad'], 'bad.txt'));
+  const invalid = await fetch(base + '/api/documents', { method: 'POST', body: form });
+  assert.equal(invalid.status, 415);
+  assert.equal((await invalid.json()).success, false);
+  const missing = await fetch(base + '/api/reviews/missing-review');
+  assert.equal(missing.status, 404);
+  assert.ok((await missing.json()).message);
+});
