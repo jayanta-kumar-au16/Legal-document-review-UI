@@ -191,7 +191,7 @@ export default function Home() {
             <button className="btn btn-secondary btn-sm" disabled={!playbookId || busy} onClick={downloadPlaybook}>Download playbook JSON</button>
             <label className="btn btn-secondary btn-sm">Upload playbook JSON<input aria-label="Upload playbook JSON" type="file" accept=".json" disabled={busy} onChange={e => { void uploadPlaybook(e.target.files?.[0]); e.target.value = ""; }}/></label>
             <button className="btn btn-secondary btn-sm" disabled={busy || !review.document_id} onClick={() => extractClauses("manual")}>Extract clauses (manual)</button>
-            <button className="btn btn-secondary btn-sm" disabled={busy || !review.document_id} onClick={() => extractClauses("llm")}>{extracting ? "Extracting…" : "Extract clauses (Ollama)"}</button>
+            <button className="btn btn-secondary btn-sm" disabled={busy || !review.document_id} onClick={() => extractClauses("llm")}>{extracting ? "Extracting…" : "Extract clauses (Open AI)"}</button>
           </div>
           {(review.warnings || []).map((w, i) => <div className="notice" key={i}>{w}</div>)}
           <div className="review-layout">
